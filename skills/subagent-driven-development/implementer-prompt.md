@@ -12,6 +12,21 @@ Task tool (general-purpose):
 
     [FULL TEXT of task from plan - paste it here, don't make subagent read file]
 
+    <!-- BEGIN beads -->
+    ## Beads Context (if present)
+
+    BEADS_ID: [bd issue id, e.g. superpowers-a1b2.3.4 — present iff Beads is enabled]
+
+    You **do not** call `bd update`, `bd close`, or any other bd state-changing
+    command. The controller is the sole writer of issue state. If you need to
+    surface a blocker, report status BLOCKED in your final report and the
+    controller will mark the bd issue blocked.
+
+    Do include `Refs: [BEADS_ID]` as the last line of every commit message you
+    create for this task — it lets `bd hooks install` correlate commits to
+    issues if the user opted into git hooks.
+    <!-- END beads -->
+
     ## Context
 
     [Scene-setting: where this fits, dependencies, architectural context]
