@@ -41,10 +41,10 @@ For each task:
 
 | Plain step | Beads-aware step |
 |---|---|
-| Pick next task from plan order | `scripts/beads-sync.sh claim-next <epic-id>` → returns the next ready leaf task ID, or empty when done |
+| Pick next task from plan order | Dispatch `superpowers:syncing-with-beads`, action `claim-next <epic-id>` → returns the next ready leaf task ID, or empty when done |
 | Mark in_progress | `bd update <id> --claim` (atomic) **and** TodoWrite → in_progress |
 | Run the task's steps | unchanged |
-| Mark completed | `scripts/beads-sync.sh close <id> <plan-path>` (closes bd issue + ticks `[ ]` checkboxes for that `### Task N:`) **and** TodoWrite → completed |
+| Mark completed | Dispatch `superpowers:syncing-with-beads`, action `close <id> <plan-path>` (closes bd issue + ticks `[ ]` checkboxes for that `### Task N:`) **and** TodoWrite → completed |
 | BLOCKED | `bd update <id> --status blocked --notes "<reason>"` before stopping |
 
 When the flag is off, this section is a no-op and the legacy markdown-only flow runs unchanged.

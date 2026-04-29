@@ -24,13 +24,31 @@ This skill is a no-op unless Beads is enabled. Precedence (first match wins):
 3. `.beads/` directory exists in repo root → on
 4. otherwise → off (legacy markdown-only flow)
 
-Source `scripts/beads-detect.sh` for the helpers `bd_available`, `bd_enabled`, `bd_prefix`. Direct invocation prints status:
+Source `$BEADS_DETECT` (see "Resolving the script path" below) for the helpers `bd_available`, `bd_enabled`, `bd_prefix`. Direct invocation prints status:
 
 ```bash
-scripts/beads-detect.sh status
+"$BEADS_DETECT" status
 ```
 
 When the flag is off, every action in this skill exits 0 with a single log line and no side effects. The legacy plan-only flow runs unchanged.
+
+## Resolving the script path
+
+The script entry point lives inside the superpowers plugin install — never at a path relative to the user's project. Resolve it once and reuse:
+
+```bash
+# Each harness exposes its plugin root via a different env var. Try them in
+# order, then fall back to an explicit override the user can set.
+SUPERPOWERS_ROOT="${CLAUDE_PLUGIN_ROOT:-${CURSOR_PLUGIN_ROOT:-${SUPERPOWERS_ROOT:-}}}"
+[[ -z "$SUPERPOWERS_ROOT" ]] && {
+  echo "error: cannot find superpowers root — set SUPERPOWERS_ROOT or run from a supported harness" >&2
+  exit 1
+}
+BEADS_SYNC="$SUPERPOWERS_ROOT/scripts/beads-sync.sh"
+BEADS_DETECT="$SUPERPOWERS_ROOT/scripts/beads-detect.sh"
+```
+
+The same pattern is already used by `hooks/session-start` for harness detection — match it. For Codex, Gemini, OpenCode, and other harnesses without a documented plugin-root env var, the user should set `SUPERPOWERS_ROOT` explicitly to wherever the plugin is checked out.
 
 ## Bootstrap
 
@@ -70,7 +88,7 @@ We do not install git hooks or background watchers. Users who want auto-reconcil
 
 ## Actions
 
-All actions are dispatched through `scripts/beads-sync.sh <action> [args]`.
+All actions are dispatched through `"$BEADS_SYNC" <action> [args]` (resolve `$BEADS_SYNC` per **Resolving the script path** above).
 
 ### `export-plan <plan-path>`
 

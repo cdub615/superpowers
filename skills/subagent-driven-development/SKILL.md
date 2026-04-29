@@ -100,12 +100,12 @@ If `superpowers:syncing-with-beads` is enabled (`SUPERPOWERS_BEADS=1` or `.beads
 
 | Step | Pure-markdown flow | Beads-aware flow |
 |---|---|---|
-| Pick next task | First unchecked task in plan order | `scripts/beads-sync.sh claim-next <epic-id>` → returns next ready leaf task ID, or empty string when done |
+| Pick next task | First unchecked task in plan order | Dispatch `superpowers:syncing-with-beads`, action `claim-next <epic-id>` → returns next ready leaf task ID, or empty string when done |
 | Mark in-flight | TodoWrite → in_progress | `bd update <id> --claim` (atomic in_progress + assign) **and** TodoWrite → in_progress |
 | Get task body | Slice the matching `### Task N:` section from the plan markdown | Same — markdown is canonical. Use the issue's `external_ref` (`file://<path>#task-N`) to confirm you're reading the right section. |
 | Dispatch implementer | Existing implementer-prompt + full task text | Same prompt, plus the `BEADS_ID: bd-xxxx` line so the implementer can put `Refs: bd-xxxx` in commit footers (see implementer-prompt.md) |
 | BLOCKED status | Escalate per "Handling Implementer Status" | Also `bd update <id> --status blocked --notes "<reason>"` before escalating, so the bd state matches reality |
-| Both reviews ✅ | TodoWrite → completed | `scripts/beads-sync.sh close <id> <plan-path>` (closes the issue **and** ticks every `[ ]` step under that `### Task N:` heading) **and** TodoWrite → completed |
+| Both reviews ✅ | TodoWrite → completed | Dispatch `superpowers:syncing-with-beads`, action `close <id> <plan-path>` (closes the issue **and** ticks every `[ ]` step under that `### Task N:` heading) **and** TodoWrite → completed |
 
 **The controller is the sole writer.** Implementer and reviewer subagents NEVER call `bd update`, `bd close`, or any other state-changing `bd` command — they include a `Refs: bd-xxxx` footer in their commit messages and otherwise leave Beads alone. This avoids dual-writer races on issue state.
 
