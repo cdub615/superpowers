@@ -86,6 +86,34 @@ digraph process {
 }
 ```
 
+<!-- BEGIN beads -->
+## Beads Integration (optional)
+
+If `superpowers:syncing-with-beads` is enabled (`SUPERPOWERS_BEADS=1` or `.beads/` exists in repo root) **and** the plan header contains `**Beads:** <epic-id>`, the controller follows this variant of the per-task loop. When the flag is off, ignore this section — the legacy TodoWrite-only flow runs unchanged.
+
+**Once at start of run:**
+1. Read the plan file as usual (we still embed the full task text in the implementer prompt — markdown is richer than `bd show` descriptions).
+2. Extract `**Beads:** <epic-id>` from the plan header.
+3. Create the TodoWrite list as usual.
+
+**Per task, replacing the implicit "pick the next task from TodoWrite":**
+
+| Step | Pure-markdown flow | Beads-aware flow |
+|---|---|---|
+| Pick next task | First unchecked task in plan order | `scripts/beads-sync.sh claim-next <epic-id>` → returns next ready leaf task ID, or empty string when done |
+| Mark in-flight | TodoWrite → in_progress | `bd update <id> --claim` (atomic in_progress + assign) **and** TodoWrite → in_progress |
+| Get task body | Slice the matching `### Task N:` section from the plan markdown | Same — markdown is canonical. Use the issue's `external_ref` (`file://<path>#task-N`) to confirm you're reading the right section. |
+| Dispatch implementer | Existing implementer-prompt + full task text | Same prompt, plus the `BEADS_ID: bd-xxxx` line so the implementer can put `Refs: bd-xxxx` in commit footers (see implementer-prompt.md) |
+| BLOCKED status | Escalate per "Handling Implementer Status" | Also `bd update <id> --status blocked --notes "<reason>"` before escalating, so the bd state matches reality |
+| Both reviews ✅ | TodoWrite → completed | `scripts/beads-sync.sh close <id> <plan-path>` (closes the issue **and** ticks every `[ ]` step under that `### Task N:` heading) **and** TodoWrite → completed |
+
+**The controller is the sole writer.** Implementer and reviewer subagents NEVER call `bd update`, `bd close`, or any other state-changing `bd` command — they include a `Refs: bd-xxxx` footer in their commit messages and otherwise leave Beads alone. This avoids dual-writer races on issue state.
+
+**Why dual-write (TodoWrite + Beads):** TodoWrite is the in-session ergonomics surface (visible in the harness UI, persists across the run). Beads is the durable cross-session source. Writing both keeps the UX intact while making progress survive session resets. On any conflict between them after a session resume, Beads wins.
+
+**Out-of-band changes** (a human closes a `bd` issue manually, or another tool ticks a checkbox) do not need to interrupt the current run. After the run, the human partner can dispatch `superpowers:syncing-with-beads`, action `reconcile`, to align state. The controller does not auto-reconcile mid-run.
+<!-- END beads -->
+
 ## Model Selection
 
 Use the least powerful model that can handle each role to conserve cost and increase speed.
