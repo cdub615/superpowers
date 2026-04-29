@@ -60,6 +60,10 @@ This structure informs the task decomposition. Each task should produce self-con
 ---
 ```
 
+<!-- BEGIN beads -->
+**If `superpowers:syncing-with-beads` is enabled** (see that skill for the flag), the plan also gets a `**Beads:** <epic-id>` line stamped under `**Spec:**` after self-review passes. Authors do **not** add it themselves — `export-plan` writes it. The line is the link to the runtime issue tree implementers pull from.
+<!-- END beads -->
+
 ## Task Structure
 
 ````markdown
@@ -131,6 +135,23 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
+<!-- BEGIN beads -->
+## Beads Mirroring (optional)
+
+After self-review passes, if Beads is enabled (`SUPERPOWERS_BEADS=1` or `.beads/` exists in repo root), mirror the plan into Beads so implementer subagents can pull work via `bd ready`.
+
+**Dispatch the helper skill:** `superpowers:syncing-with-beads`, action `export-plan <plan-path>`. It is idempotent — re-running on an already-mirrored plan is a no-op.
+
+What it does:
+- Validates the plan header (Goal/Architecture/Spec required).
+- Creates one epic per plan, one chore per chunk, one task per `### Task N:` leaf.
+- Wires sequential chunk dependencies (every task in chunk N+1 blocked by every task in chunk N) so `bd ready` only surfaces in-flight work.
+- Per-task **Deps:** override: a task may include a `**Deps:** Task X, Task Y` line in its body to replace the default sequential dep with explicit task references.
+- Stamps `**Beads:** <epic-id>` into the plan after the `**Spec:**` line.
+
+If `bd` is unavailable or `SUPERPOWERS_BEADS=0`, this section is a no-op and the plan stays markdown-only — the legacy flow.
+<!-- END beads -->
+
 ## Execution Handoff
 
 After saving the plan, offer execution choice:
@@ -150,3 +171,7 @@ After saving the plan, offer execution choice:
 **If Inline Execution chosen:**
 - **REQUIRED SUB-SKILL:** Use superpowers:executing-plans
 - Batch execution with checkpoints for review
+
+<!-- BEGIN beads -->
+**If Beads is enabled,** the handoff message also includes the epic id: `Beads epic <epic-id>` — implementer skills will pull leaf tasks via `bd ready --parent <epic-id>` and close them as they go.
+<!-- END beads -->
