@@ -132,6 +132,37 @@ inject_beads_header() {
 
 # --- export-plan ---
 
+# Validate the parsed outline has well-formed structure: chunks strictly
+# increasing, tasks unique and contiguous starting at 1. Line-pointed errors.
+validate_plan_outline() {
+  local plan="$1" outline_data="$2"
+
+  local prev_chunk=0 lineno kind num name
+  while IFS=$'\t' read -r lineno kind num name; do
+    [[ -z "$lineno" ]] && continue
+    if [[ "$kind" == "chunk" ]]; then
+      if (( num <= prev_chunk )); then
+        die "$plan:$lineno chunk $num appears after chunk $prev_chunk (chunks must strictly increase)"
+      fi
+      prev_chunk=$num
+    fi
+  done <<<"$outline_data"
+
+  local expected=1
+  declare -A seen_tasks=()
+  while IFS=$'\t' read -r lineno kind num name; do
+    [[ -z "$lineno" || "$kind" != "task" ]] && continue
+    if [[ -n "${seen_tasks[$num]:-}" ]]; then
+      die "$plan:$lineno task $num is duplicated (first seen at line ${seen_tasks[$num]})"
+    fi
+    seen_tasks[$num]="$lineno"
+    if (( num != expected )); then
+      die "$plan:$lineno expected task $expected, got task $num (task numbers must be contiguous starting at 1)"
+    fi
+    expected=$((expected + 1))
+  done <<<"$outline_data"
+}
+
 # Validate the plan has the mandatory header lines. Print line-pointed
 # errors and exit 2 on failure.
 validate_plan_header() {
@@ -186,6 +217,7 @@ action_export_plan() {
   if [[ -z "$outline" ]]; then
     die "$plan has no '## Chunk N:' or '### Task N:' headers"
   fi
+  validate_plan_outline "$plan" "$outline"
 
   # Compute end-line for each header (next header's lineno, or 0 = EOF).
   # We carry an extra column "end" via paste-into-awk.
