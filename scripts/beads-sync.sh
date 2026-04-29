@@ -26,6 +26,9 @@ source "$SCRIPT_DIR/beads-detect.sh"
 die() { echo "error: $*" >&2; exit 1; }
 log() { echo "[beads-sync] $*" >&2; }
 
+# Linux/BSD-portable mtime in epoch seconds.
+plan_mtime() { stat -c '%Y' "$1" 2>/dev/null || stat -f '%m' "$1" 2>/dev/null; }
+
 require_bd() {
   bd_available || die "bd not on PATH"
 }
@@ -281,14 +284,204 @@ action_claim_next() {
     | jq -r '[.[] | select(.issue_type == "task")] | sort_by(.priority, .id) | .[0].id // empty'
 }
 
-# --- reconcile / close (stubbed for v1; implemented in T5) ---
+# --- task<->checkbox helpers (used by reconcile and close) ---
 
-action_reconcile() {
-  die "reconcile action not yet implemented (tracked as superpowers-4b0.5)"
+# Extract task number from an external_ref like "file:///path/plan.md#task-12".
+# Echoes empty if not a task ref.
+task_num_from_ref() {
+  local ref="${1:-}"
+  printf '%s\n' "$ref" | sed -nE 's|^.*#task-([0-9]+)$|\1|p'
 }
 
+# Check whether a plan task has any unchecked steps. Echoes "open" or "done".
+# Code-fence-aware: ignores `- [ ]` text inside fenced blocks.
+task_checkbox_status() {
+  local plan="$1" num="$2"
+  local in_task=0 in_fence=0 line saw_unchecked=0 saw_any=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+      '```'*) in_fence=$((1 - in_fence)); continue ;;
+    esac
+    if (( in_fence == 1 )); then continue; fi
+    if [[ "$line" =~ ^"### Task "([0-9]+)": " ]]; then
+      if (( in_task == 1 )); then break; fi
+      [[ "${BASH_REMATCH[1]}" == "$num" ]] && in_task=1 || in_task=0
+      continue
+    fi
+    if [[ "$line" =~ ^"## " ]] && (( in_task == 1 )); then break; fi
+    if (( in_task == 1 )); then
+      if [[ "$line" =~ ^"- [ ]" ]]; then saw_any=1; saw_unchecked=1; fi
+      if [[ "$line" =~ ^"- [x]" ]]; then saw_any=1; fi
+    fi
+  done < "$plan"
+  if (( saw_any == 0 )); then
+    # No checkboxes parsed (e.g., task body is all code) — treat as open
+    # so we never auto-close a task with no observable progress markers.
+    echo "open"
+  elif (( saw_unchecked == 1 )); then
+    echo "open"
+  else
+    echo "done"
+  fi
+}
+
+# Tick all `- [ ]` checkboxes belonging to task N. Code-fence-aware.
+# Returns number of boxes flipped on stdout.
+tick_task_checkboxes() {
+  local plan="$1" num="$2"
+  local tmp flipped
+  tmp=$(mktemp)
+  flipped=$(awk -v num="$num" '
+    BEGIN { in_task = 0; in_fence = 0; flipped = 0 }
+    /^```/ { print; in_fence = !in_fence; next }
+    in_fence { print; next }
+    /^### Task [0-9]+: / {
+      if (in_task) in_task = 0
+      if (match($0, /^### Task ([0-9]+): /, a) && a[1] == num) in_task = 1
+      print
+      next
+    }
+    /^## / && in_task { in_task = 0; print; next }
+    in_task && /^- \[ \] / {
+      sub(/^- \[ \] /, "- [x] ")
+      flipped++
+      print
+      next
+    }
+    { print }
+    END { print flipped > "/dev/stderr" }
+  ' "$plan" 2> "${tmp}.flipped" > "$tmp")
+  flipped=$(cat "${tmp}.flipped")
+  rm -f "${tmp}.flipped"
+  mv "$tmp" "$plan"
+  echo "$flipped"
+}
+
+# --- close ---
+
 action_close() {
-  die "close action not yet implemented (tracked as superpowers-4b0.5)"
+  local issue_id="${1:-}" plan="${2:-}"
+  [[ -n "$issue_id" && -n "$plan" ]] || die "usage: close <issue-id> <plan-path>"
+  [[ -f "$plan" ]] || die "$plan not found"
+  bd_enabled || { log "Beads disabled; cannot close $issue_id"; return 0; }
+  require_bd
+
+  # Get the issue's external_ref to learn its task number.
+  local ref num flipped mtime_before mtime_after
+  ref=$(bd show "$issue_id" --json 2>/dev/null | jq -r '.[0].external_ref // empty')
+  num=$(task_num_from_ref "$ref")
+  if [[ -n "$num" ]]; then
+    mtime_before=$(plan_mtime "$plan")
+    # Check whether the task already has all boxes ticked. If yes, skip
+    # the rewrite entirely (idempotent + avoids touching mtime).
+    if [[ "$(task_checkbox_status "$plan" "$num")" != "done" ]]; then
+      mtime_after=$(plan_mtime "$plan")
+      if [[ "$mtime_before" != "$mtime_after" ]]; then
+        die "plan $plan was modified during close; aborting to avoid clobber"
+      fi
+      flipped=$(tick_task_checkboxes "$plan" "$num")
+      log "ticked $flipped checkbox(es) for task $num in $plan"
+    fi
+  else
+    log "warn: $issue_id has no #task-N external_ref; skipping checkbox tick"
+  fi
+  bd close "$issue_id" --suggest-next 2>&1 | tail -3
+}
+
+# --- reconcile ---
+
+# For one issue under the epic, decide what (if any) action to take.
+# Echoes a single TSV line: action  issue_id  task_num  reason
+# action ∈ {tick, close, noop, conflict}
+reconcile_decide() {
+  local plan="$1" issue_json="$2"
+  local id status num
+  id=$(printf '%s' "$issue_json" | jq -r '.id')
+  status=$(printf '%s' "$issue_json" | jq -r '.status')
+  num=$(task_num_from_ref "$(printf '%s' "$issue_json" | jq -r '.external_ref // empty')")
+  if [[ -z "$num" ]]; then
+    printf 'noop\t%s\t-\tnon-task or no task ref\n' "$id"
+    return
+  fi
+  local plan_state
+  plan_state=$(task_checkbox_status "$plan" "$num")
+  case "$status:$plan_state" in
+    closed:open)  printf 'tick\t%s\t%s\tbd closed; plan has unchecked boxes\n' "$id" "$num" ;;
+    open:done)    printf 'close\t%s\t%s\tplan all-checked; bd still open\n' "$id" "$num" ;;
+    closed:done)  printf 'noop\t%s\t%s\tin sync (closed/done)\n' "$id" "$num" ;;
+    open:open)    printf 'noop\t%s\t%s\tin flight (open/open)\n' "$id" "$num" ;;
+    *)            printf 'conflict\t%s\t%s\tunknown state %s/%s\n' "$id" "$num" "$status" "$plan_state" ;;
+  esac
+}
+
+action_reconcile() {
+  local plan="${1:-}"
+  [[ -n "$plan" ]] || die "usage: reconcile <plan-path>"
+  [[ -f "$plan" ]] || die "$plan not found"
+  bd_enabled || { log "Beads disabled; nothing to reconcile"; return 0; }
+  require_bd
+
+  local epic_id
+  epic_id=$(plan_beads_id "$plan")
+  [[ -n "$epic_id" ]] || die "$plan has no **Beads:** header — has export-plan run?"
+
+  log "reconciling $plan against epic $epic_id"
+
+  # Fetch every leaf task whose external_ref points at this exact plan file.
+  # Note: bd list --json omits the parent field, so we identify "tasks belonging
+  # to this plan" by external_ref prefix instead. We also pass --status all so
+  # closed issues come through (default --status=open hides them).
+  local plan_abs
+  plan_abs="$(realpath "$plan")"
+  local issues
+  issues=$(bd list --all --json 2>/dev/null | jq -c --arg pref "file://${plan_abs}#task-" '
+    [.[] | select(.issue_type == "task" and (.external_ref // "" | startswith($pref)))]
+  ')
+
+  local count
+  count=$(printf '%s' "$issues" | jq 'length')
+  log "found $count task(s) under $epic_id"
+
+  local conflicts=0 ticks=0 closes=0
+  local mtime_seen
+  mtime_seen=$(plan_mtime "$plan")
+  while IFS= read -r issue; do
+    [[ -z "$issue" || "$issue" == "null" ]] && continue
+    local decision action id num reason
+    decision=$(reconcile_decide "$plan" "$issue")
+    IFS=$'\t' read -r action id num reason <<<"$decision"
+    case "$action" in
+      tick)
+        local now
+        now=$(plan_mtime "$plan")
+        if [[ "$now" != "$mtime_seen" ]]; then
+          die "plan $plan modified mid-reconcile; aborting (mtime $mtime_seen → $now)"
+        fi
+        local flipped
+        flipped=$(tick_task_checkboxes "$plan" "$num")
+        mtime_seen=$(plan_mtime "$plan")
+        log "  $id (task $num): $reason → ticked $flipped checkbox(es)"
+        ticks=$((ticks + 1))
+        ;;
+      close)
+        log "  $id (task $num): $reason → bd close"
+        bd close "$id" --reason "reconciled from plan markdown" >/dev/null
+        closes=$((closes + 1))
+        ;;
+      conflict)
+        log "  $id (task $num): CONFLICT — $reason"
+        conflicts=$((conflicts + 1))
+        ;;
+      noop)
+        : ;;
+    esac
+  done < <(printf '%s' "$issues" | jq -c '.[]')
+
+  log "summary: ticks=$ticks, closes=$closes, conflicts=$conflicts"
+  if (( conflicts > 0 )); then
+    log "exiting non-zero due to conflicts; resolve manually and re-run"
+    return 3
+  fi
 }
 
 # --- entry point ---
