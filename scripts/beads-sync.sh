@@ -33,6 +33,46 @@ require_bd() {
   bd_available || die "bd not on PATH"
 }
 
+# Ensure .beads/ exists; offer to init if interactive, fall back to
+# markdown-only otherwise. Echoes "ok" if .beads/ is present (or was just
+# created), "fallback" if the caller should quietly stop.
+ensure_beads_dir() {
+  if [[ -d .beads ]]; then
+    echo ok
+    return
+  fi
+  if [[ ! -t 0 ]]; then
+    log "no .beads/ in $(pwd); non-interactive session, falling back to markdown-only"
+    echo fallback
+    return
+  fi
+  local prefix
+  prefix="$(bd_prefix)"
+  printf '\nNo .beads/ in this repo. Initialize with prefix %q? (y/N) ' "$prefix" >&2
+  local ans
+  read -r ans
+  case "$ans" in
+    y|Y|yes|YES)
+      if bd init --prefix "$prefix" >&2; then
+        echo ok
+      else
+        log "bd init failed; falling back to markdown-only"
+        echo fallback
+      fi
+      ;;
+    *)
+      log "user declined bd init; falling back to markdown-only"
+      echo fallback
+      ;;
+  esac
+}
+
+# Stricter check used by actions that PRESUME .beads/ exists (reconcile,
+# claim-next, close — they have nothing useful to do without prior export).
+require_beads_dir() {
+  [[ -d .beads ]] || die "no .beads/ in $(pwd) — run 'beads-sync.sh export-plan <plan>' first"
+}
+
 # --- plan parsing ---
 
 # Emit TSV of structural headers in a plan, skipping content inside code
@@ -113,6 +153,14 @@ action_export_plan() {
   [[ -f "$plan" ]] || die "$plan not found"
   bd_enabled || { log "Beads disabled; skipping export of $plan"; return 0; }
   require_bd
+
+  # Bootstrap .beads/ if missing (interactive prompt; non-interactive
+  # falls back to markdown-only with a logged warning).
+  case "$(ensure_beads_dir)" in
+    fallback) return 0 ;;
+    ok) ;;
+    *) die "ensure_beads_dir returned unexpected value" ;;
+  esac
 
   local plan_abs title goal_line arch_line spec_line existing_epic
   plan_abs="$(realpath "$plan")"
@@ -278,6 +326,7 @@ action_claim_next() {
   [[ -n "$epic_id" ]] || die "usage: claim-next <epic-id>"
   bd_enabled || { log "Beads disabled"; return 0; }
   require_bd
+  require_beads_dir
   # bd ready returns epics/chores/tasks; we only want leaf tasks. Sort by
   # priority asc then id (stable) and take the first.
   bd ready --parent "$epic_id" --json 2>/dev/null \
@@ -365,6 +414,7 @@ action_close() {
   [[ -f "$plan" ]] || die "$plan not found"
   bd_enabled || { log "Beads disabled; cannot close $issue_id"; return 0; }
   require_bd
+  require_beads_dir
 
   # Get the issue's external_ref to learn its task number.
   local ref num flipped mtime_before mtime_after
@@ -420,6 +470,7 @@ action_reconcile() {
   [[ -f "$plan" ]] || die "$plan not found"
   bd_enabled || { log "Beads disabled; nothing to reconcile"; return 0; }
   require_bd
+  require_beads_dir
 
   local epic_id
   epic_id=$(plan_beads_id "$plan")
