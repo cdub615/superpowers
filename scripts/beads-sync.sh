@@ -459,7 +459,10 @@ action_close() {
     if [[ "$(task_checkbox_status "$plan" "$num")" != "done" ]]; then
       mtime_after=$(plan_mtime "$plan")
       if [[ "$mtime_before" != "$mtime_after" ]]; then
-        die "plan $plan was modified during close; aborting to avoid clobber"
+        die "plan $plan was modified during close (mtime $mtime_before → $mtime_after)
+  intended change: tick remaining '[ ]' checkboxes for task $num (issue $issue_id)
+  remediation:     re-run 'beads-sync.sh close $issue_id $plan' after the manual edit settles,
+                   or tick those checkboxes by hand"
       fi
       flipped=$(tick_task_checkboxes "$plan" "$num")
       log "ticked $flipped checkbox(es) for task $num in $plan"
@@ -538,7 +541,9 @@ action_reconcile() {
         local now
         now=$(plan_mtime "$plan")
         if [[ "$now" != "$mtime_seen" ]]; then
-          die "plan $plan modified mid-reconcile; aborting (mtime $mtime_seen → $now)"
+          die "plan $plan modified mid-reconcile (mtime $mtime_seen → $now)
+  intended change: tick '[ ]' checkboxes for task $num (issue $id; reason: $reason)
+  remediation:     re-run 'beads-sync.sh reconcile $plan' after the manual edit settles"
         fi
         local flipped
         flipped=$(tick_task_checkboxes "$plan" "$num")
