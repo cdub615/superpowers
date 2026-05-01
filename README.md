@@ -1,4 +1,6 @@
-# Superpowers
+# Superpowers (Beads-integrated fork)
+
+> **Heads up:** This is a fork of [obra/superpowers](https://github.com/obra/superpowers) with first-class [Beads](https://github.com/steveyegge/beads) integration for issue tracking. The default branch (`beads-integration`) wires Beads into the Superpowers workflow so plans, tasks, and handoffs flow through `bd` instead of ad-hoc todos. If you want vanilla Superpowers, use the upstream repo.
 
 Superpowers is a complete software development methodology for your coding agents, built on top of a set of composable skills and some initial instructions that make sure your agent uses them.
 
@@ -31,6 +33,47 @@ Thanks!
 ## Installation
 
 Installation differs by harness. If you use more than one, install Superpowers separately for each one.
+
+### Installing this fork (Beads-integrated)
+
+The instructions below are for installing **this fork** instead of upstream Superpowers. You also need [Beads](https://github.com/steveyegge/beads) installed and on your `PATH` — without `bd`, the Beads-specific skills and hooks are no-ops.
+
+**Prerequisites:**
+
+```bash
+# Install Beads — see https://github.com/steveyegge/beads for current instructions
+bd --version   # confirm it's on your PATH
+```
+
+**Claude Code:**
+
+```bash
+/plugin marketplace add cdub615/superpowers
+/plugin install superpowers@superpowers-dev
+```
+
+**Factory Droid:**
+
+```bash
+droid plugin marketplace add https://github.com/cdub615/superpowers
+droid plugin install superpowers@superpowers-dev
+```
+
+**Gemini CLI:**
+
+```bash
+gemini extensions install https://github.com/cdub615/superpowers
+```
+
+**OpenCode:**
+
+```
+Fetch and follow instructions from https://raw.githubusercontent.com/cdub615/superpowers/refs/heads/beads-integration/.opencode/INSTALL.md
+```
+
+For other harnesses, follow the upstream instructions below but substitute `cdub615/superpowers` for `obra/superpowers` wherever a repo or marketplace is referenced.
+
+---
 
 ### Claude Code
 
